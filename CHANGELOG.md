@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `gcs use` now applies a profile to the global Git configuration when run
+  directly from the user's home directory and reports the written configuration
+  file after success.
+- Renamed `gcs current` to `gcs info`.
+
 ## [0.1.1] - 2026-07-30
 
 ### Fixed

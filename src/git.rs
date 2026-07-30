@@ -1,6 +1,11 @@
-use std::process::{Command, Output};
+use std::{
+    env,
+    path::PathBuf,
+    process::{Command, Output},
+};
 
 use anyhow::{Context, Result, anyhow, bail};
+use directories::BaseDirs;
 
 use crate::profiles::Profile;
 
@@ -10,6 +15,21 @@ const KEYS: [&str; 4] = [
     "user.signingkey",
     "commit.gpgsign",
 ];
+
+#[derive(Clone, Copy)]
+enum ConfigScope {
+    Local,
+    Global,
+}
+
+impl ConfigScope {
+    fn argument(self) -> &'static str {
+        match self {
+            Self::Local => "--local",
+            Self::Global => "--global",
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GitIdentity {
@@ -53,64 +73,103 @@ pub fn ensure_repository() -> Result<()> {
 
 pub fn read_identity() -> Result<GitIdentity> {
     Ok(GitIdentity {
-        name: get_first("user.name")?,
-        email: get_first("user.email")?,
-        signing_key: get_first("user.signingkey")?,
-        gpg_sign: get_first("commit.gpgsign")?,
+        name: get_first(ConfigScope::Local, "user.name")?,
+        email: get_first(ConfigScope::Local, "user.email")?,
+        signing_key: get_first(ConfigScope::Local, "user.signingkey")?,
+        gpg_sign: get_first(ConfigScope::Local, "commit.gpgsign")?,
     })
 }
 
-pub fn apply_profile(profile: &Profile) -> Result<()> {
-    ensure_repository()?;
-    let original = snapshot()?;
-    let result = apply(profile);
+pub fn apply_profile(profile: &Profile) -> Result<String> {
+    let scope = config_scope()?;
+    if matches!(scope, ConfigScope::Local) {
+        ensure_repository()?;
+    }
+    let original = snapshot(scope)?;
+    let result = apply(scope, profile);
     if let Err(error) = result {
-        if let Err(rollback_error) = restore(&original) {
+        if let Err(rollback_error) = restore(scope, &original) {
             return Err(error.context(format!("rollback also failed: {rollback_error:#}")));
         }
         return Err(error.context("Git configuration was restored"));
     }
-    Ok(())
+    config_origin(scope, "user.name")
 }
 
-fn apply(profile: &Profile) -> Result<()> {
-    replace("user.name", &profile.name)?;
-    replace("user.email", &profile.email)?;
+fn config_scope() -> Result<ConfigScope> {
+    let current_dir = canonical_current_dir()?;
+    let home_dir = BaseDirs::new()
+        .context("could not determine the user home directory")?
+        .home_dir()
+        .canonicalize()
+        .context("could not resolve the user home directory")?;
+
+    Ok(if current_dir == home_dir {
+        ConfigScope::Global
+    } else {
+        ConfigScope::Local
+    })
+}
+
+fn canonical_current_dir() -> Result<PathBuf> {
+    env::current_dir()
+        .context("could not determine the current directory")?
+        .canonicalize()
+        .context("could not resolve the current directory")
+}
+
+fn apply(scope: ConfigScope, profile: &Profile) -> Result<()> {
+    replace(scope, "user.name", &profile.name)?;
+    replace(scope, "user.email", &profile.email)?;
     match &profile.signing_key {
         Some(key) => {
-            replace("user.signingkey", key)?;
-            replace("commit.gpgsign", "true")?;
+            replace(scope, "user.signingkey", key)?;
+            replace(scope, "commit.gpgsign", "true")?;
         }
         None => {
-            unset("user.signingkey")?;
-            unset("commit.gpgsign")?;
+            unset(scope, "user.signingkey")?;
+            unset(scope, "commit.gpgsign")?;
         }
     }
     Ok(())
 }
 
-fn snapshot() -> Result<Vec<(&'static str, Vec<String>)>> {
+fn snapshot(scope: ConfigScope) -> Result<Vec<(&'static str, Vec<String>)>> {
     KEYS.into_iter()
-        .map(|key| Ok((key, get_all(key)?)))
+        .map(|key| Ok((key, get_all(scope, key)?)))
         .collect()
 }
 
-fn restore(values: &[(&str, Vec<String>)]) -> Result<()> {
+fn restore(scope: ConfigScope, values: &[(&str, Vec<String>)]) -> Result<()> {
     for (key, stored_values) in values {
-        unset(key)?;
+        unset(scope, key)?;
         for value in stored_values {
-            add(key, value)?;
+            add(scope, key, value)?;
         }
     }
     Ok(())
 }
 
-fn get_first(key: &str) -> Result<Option<String>> {
-    Ok(get_all(key)?.into_iter().next())
+fn get_first(scope: ConfigScope, key: &str) -> Result<Option<String>> {
+    Ok(get_all(scope, key)?.into_iter().next())
 }
 
-fn get_all(key: &str) -> Result<Vec<String>> {
-    let output = run_git(&["config", "--local", "--get-all", key])?;
+fn config_origin(scope: ConfigScope, key: &str) -> Result<String> {
+    let output = run_git(&["config", scope.argument(), "--show-origin", "--get", key])?;
+    if !output.status.success() {
+        return Err(git_failure("locate", key, &output));
+    }
+
+    let stdout = String::from_utf8(output.stdout).context("Git returned non-UTF-8 output")?;
+    let origin = stdout
+        .split_once('\t')
+        .map(|(origin, _)| origin)
+        .context("Git did not report the configuration file")?;
+    Ok(origin.strip_prefix("file:").unwrap_or(origin).to_owned())
+}
+
+fn get_all(scope: ConfigScope, key: &str) -> Result<Vec<String>> {
+    let output = run_git(&["config", scope.argument(), "--get-all", key])?;
     if output.status.success() {
         let stdout = String::from_utf8(output.stdout).context("Git returned non-UTF-8 output")?;
         Ok(stdout.lines().map(str::to_owned).collect())
@@ -121,8 +180,8 @@ fn get_all(key: &str) -> Result<Vec<String>> {
     }
 }
 
-fn replace(key: &str, value: &str) -> Result<()> {
-    let output = run_git(&["config", "--local", "--replace-all", key, value])?;
+fn replace(scope: ConfigScope, key: &str, value: &str) -> Result<()> {
+    let output = run_git(&["config", scope.argument(), "--replace-all", key, value])?;
     if output.status.success() {
         Ok(())
     } else {
@@ -130,8 +189,8 @@ fn replace(key: &str, value: &str) -> Result<()> {
     }
 }
 
-fn add(key: &str, value: &str) -> Result<()> {
-    let output = run_git(&["config", "--local", "--add", key, value])?;
+fn add(scope: ConfigScope, key: &str, value: &str) -> Result<()> {
+    let output = run_git(&["config", scope.argument(), "--add", key, value])?;
     if output.status.success() {
         Ok(())
     } else {
@@ -139,8 +198,8 @@ fn add(key: &str, value: &str) -> Result<()> {
     }
 }
 
-fn unset(key: &str) -> Result<()> {
-    let output = run_git(&["config", "--local", "--unset-all", key])?;
+fn unset(scope: ConfigScope, key: &str) -> Result<()> {
+    let output = run_git(&["config", scope.argument(), "--unset-all", key])?;
     if output.status.success() || matches!(output.status.code(), Some(1 | 5)) {
         Ok(())
     } else {

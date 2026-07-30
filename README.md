@@ -45,7 +45,7 @@ gcs edit work
 gcs edit work --email "new-address@company.example"
 gcs edit work --no-signing
 gcs use work
-gcs current
+gcs info
 gcs remove personal
 ```
 
