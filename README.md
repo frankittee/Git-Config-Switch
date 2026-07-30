@@ -3,6 +3,8 @@
 `gcs` is a small command-line tool for switching Git identity profiles in the
 current repository. It changes only repository-local Git configuration.
 
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Install
 
 ```sh
