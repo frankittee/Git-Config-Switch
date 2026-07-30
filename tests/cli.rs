@@ -32,6 +32,18 @@ impl TestContext {
         Command::new(env!("CARGO_BIN_EXE_gcs"))
             .args(args)
             .env("GCS_CONFIG_DIR", self.config.path())
+            .env("GIT_CONFIG_GLOBAL", self.config.path().join("gitconfig"))
+            .current_dir(self.repository.path())
+            .output()
+            .unwrap()
+    }
+
+    fn gcs_from_home(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_gcs"))
+            .args(args)
+            .env("HOME", self.repository.path())
+            .env("GCS_CONFIG_DIR", self.config.path())
+            .env("GIT_CONFIG_GLOBAL", self.config.path().join("gitconfig"))
             .current_dir(self.repository.path())
             .output()
             .unwrap()
@@ -41,6 +53,19 @@ impl TestContext {
         let output = Command::new("git")
             .args(["config", "--local", "--get", key])
             .current_dir(self.repository.path())
+            .output()
+            .unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8(output.stdout).unwrap().trim().to_owned())
+    }
+
+    fn global_git_value(&self, key: &str) -> Option<String> {
+        let output = Command::new("git")
+            .args(["config", "--global", "--get", key])
+            .env("HOME", self.repository.path())
+            .env("GIT_CONFIG_GLOBAL", self.config.path().join("gitconfig"))
             .output()
             .unwrap();
         output
@@ -141,13 +166,42 @@ fn applies_profiles_and_reports_current() {
     let context = TestContext::new(true);
     add(&context, "work", "Work User", "work@example.com");
 
-    assert_success(&context.gcs(&["use", "work"]));
+    let use_output = context.gcs(&["use", "work"]);
+    assert_success(&use_output);
+    assert_eq!(
+        stdout(&use_output),
+        "Successfully write profiles into .git/config\n"
+    );
     assert_eq!(context.git_value("user.name").as_deref(), Some("Work User"));
     assert_eq!(
         context.git_value("user.email").as_deref(),
         Some("work@example.com")
     );
-    assert_eq!(stdout(&context.gcs(&["current"])), "work\n");
+    assert_eq!(stdout(&context.gcs(&["info"])), "work\n");
+}
+
+#[test]
+fn use_from_home_applies_profile_globally() {
+    let context = TestContext::new(false);
+    add(&context, "work", "Work User", "work@example.com");
+
+    let use_output = context.gcs_from_home(&["use", "work"]);
+    assert_success(&use_output);
+    assert_eq!(
+        stdout(&use_output),
+        format!(
+            "Successfully write profiles into {}\n",
+            context.config.path().join("gitconfig").display()
+        )
+    );
+    assert_eq!(
+        context.global_git_value("user.name").as_deref(),
+        Some("Work User")
+    );
+    assert_eq!(
+        context.global_git_value("user.email").as_deref(),
+        Some("work@example.com")
+    );
 }
 
 #[test]
@@ -180,7 +234,7 @@ fn signing_is_enabled_and_then_cleared() {
 #[test]
 fn unmanaged_and_failure_paths_are_clear() {
     let context = TestContext::new(true);
-    let unmanaged = context.gcs(&["current"]);
+    let unmanaged = context.gcs(&["info"]);
     assert_success(&unmanaged);
     assert_eq!(stdout(&unmanaged), "unmanaged\n");
     assert!(!context.gcs(&["use", "missing"]).status.success());
@@ -190,9 +244,9 @@ fn unmanaged_and_failure_paths_are_clear() {
     let use_output = outside.gcs(&["use", "work"]);
     assert!(!use_output.status.success());
     assert!(stderr(&use_output).contains("not inside a Git repository"));
-    let current_output = outside.gcs(&["current"]);
-    assert!(!current_output.status.success());
-    assert!(stderr(&current_output).contains("not inside a Git repository"));
+    let info_output = outside.gcs(&["info"]);
+    assert!(!info_output.status.success());
+    assert!(stderr(&info_output).contains("not inside a Git repository"));
 }
 
 #[test]

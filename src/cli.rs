@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
     name = "gcs",
     version,
     about = "Switch Git identity profiles in the current repository",
-    after_help = "Examples:\n  gcs add work\n  gcs edit work\n  gcs edit work --email new@example.com\n  gcs add personal --name \"Ada Lovelace\" --email ada@example.com\n  gcs use work\n  gcs current"
+    after_help = "Examples:\n  gcs add work\n  gcs edit work\n  gcs edit work --email new@example.com\n  gcs add personal --name \"Ada Lovelace\" --email ada@example.com\n  gcs use work\n  gcs info"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -63,5 +63,5 @@ pub enum Command {
         profile: String,
     },
     /// Show the profile matching the current repository configuration
-    Current,
+    Info,
 }

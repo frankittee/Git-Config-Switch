@@ -97,10 +97,10 @@ fn run() -> Result<()> {
         }
         cli::Command::Use { profile } => {
             let value = store.get(&profile)?;
-            git::apply_profile(&value)?;
-            println!("{profile}");
+            let config_file = git::apply_profile(&value)?;
+            println!("Successfully write profiles into {config_file}");
         }
-        cli::Command::Current => {
+        cli::Command::Info => {
             git::ensure_repository()?;
             let current = git::read_identity()?;
             let profiles = store.load()?;
