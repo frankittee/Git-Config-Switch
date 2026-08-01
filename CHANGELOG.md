@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- SSH host alias discovery now uses `ssh2-config-rs` to follow nested `Include` directives, including relative paths, `~`, and glob patterns.
+
 ## [0.4.0] - 2026-07-31
 
 ### Added

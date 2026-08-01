@@ -144,7 +144,7 @@ By default, `gcs use` updates the current repository's local Git configuration. 
 
 If a profile has a signing key, `gcs use` sets `user.signingkey` and enables `commit.gpgsign`. Applying a profile without a signing key removes both settings from the selected Git configuration scope.
 
-If a profile has an `ssh_host`, `gcs` first verifies that the literal `Host` alias exists in `~/.ssh/config`, then rewrites SSH fetch URLs and explicit push URLs for every remote to use that alias. HTTPS and local URLs are left unchanged. Validation or write failures leave both identity and remote configuration unchanged.
+If a profile has an `ssh_host`, `gcs` first verifies that the literal `Host` alias exists in `~/.ssh/config` or an included configuration file, then rewrites SSH fetch URLs and explicit push URLs for every remote to use that alias. Include paths support paths relative to `~/.ssh`, absolute paths, `~`, nested includes, and glob wildcards. HTTPS and local URLs are left unchanged. Validation or write failures leave both identity and remote configuration unchanged.
 
 <details>
 <summary><strong>Release process</strong></summary>

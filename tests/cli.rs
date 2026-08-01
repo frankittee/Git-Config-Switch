@@ -96,9 +96,14 @@ impl TestContext {
     }
 
     fn ssh_config(&self, contents: &str) {
+        self.ssh_config_file("config", contents);
+    }
+
+    fn ssh_config_file(&self, path: &str, contents: &str) {
         let directory = self.home.path().join(".ssh");
-        fs::create_dir_all(&directory).unwrap();
-        fs::write(directory.join("config"), contents).unwrap();
+        let path = directory.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
     }
 
     fn git(&self, args: &[&str]) {
@@ -356,9 +361,44 @@ fn use_rewrites_all_ssh_remote_urls() {
 }
 
 #[test]
+fn included_ssh_host_is_accepted() {
+    let context = TestContext::new(true);
+    context.ssh_config("Include aliases/*.conf\n");
+    context.ssh_config_file(
+        "aliases/work.conf",
+        "Include nested.conf\nHost github-work\n  HostName github.com\n",
+    );
+    context.ssh_config_file("nested.conf", "Host github-personal\n");
+    context.git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:owner/project.git",
+    ]);
+    context.git(&["config", "--local", "user.name", "Original User"]);
+    assert_success(&context.gcs(&[
+        "add",
+        "work",
+        "--name",
+        "Work User",
+        "--email",
+        "work@example.com",
+        "--ssh-host",
+        "github-work",
+    ]));
+
+    assert_success(&context.gcs(&["use", "work"]));
+    assert_eq!(context.git_value("user.name").as_deref(), Some("Work User"));
+    assert_eq!(
+        context.git_values("remote.origin.url"),
+        vec!["git@github-work:owner/project.git"]
+    );
+}
+
+#[test]
 fn missing_or_non_literal_ssh_host_preserves_configuration() {
     let context = TestContext::new(true);
-    context.ssh_config("Include aliases\nHost work-*\n  HostName github.com\n");
+    context.ssh_config("Host work-*\n  HostName github.com\n");
     context.git(&[
         "remote",
         "add",

@@ -12,6 +12,7 @@ crossterm = "0.28"
 directories = "6.0"
 ratatui = "0.29"
 serde = { version = "1.0", features = ["derive"] }
+ssh2-config-rs = "0.7"
 tempfile = "3.20"
 toml = "0.9"
 

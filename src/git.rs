@@ -1,12 +1,13 @@
 use std::{
     collections::BTreeSet,
-    env, fs,
+    env,
     path::PathBuf,
     process::{Command, Output},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use directories::BaseDirs;
+use ssh2_config_rs::{ParseRule, SshConfig};
 
 use crate::profiles::Profile;
 
@@ -192,34 +193,28 @@ fn ensure_ssh_host_exists(alias: &str) -> Result<()> {
 }
 
 pub fn ssh_host_aliases() -> Result<Vec<String>> {
-    let path = ssh_config_path()?;
-    let contents = fs::read_to_string(&path)
-        .with_context(|| format!("could not read SSH configuration {}", path.display()))?;
-    Ok(parse_ssh_host_aliases(&contents))
+    let rules = ParseRule::ALLOW_UNKNOWN_FIELDS | ParseRule::ALLOW_UNSUPPORTED_FIELDS;
+    let config = SshConfig::parse_default_file(rules).with_context(|| {
+        format!(
+            "could not parse SSH configuration {}",
+            ssh_config_path()
+                .unwrap_or_else(|_| PathBuf::from("~/.ssh/config"))
+                .display()
+        )
+    })?;
+    let aliases: BTreeSet<String> = config
+        .get_hosts()
+        .iter()
+        .flat_map(|host| &host.pattern)
+        .filter(|clause| !clause.negated && !clause.pattern.contains(['*', '?', '!']))
+        .map(|clause| clause.pattern.clone())
+        .collect();
+    Ok(aliases.into_iter().collect())
 }
 
 fn ssh_config_path() -> Result<PathBuf> {
     let base_dirs = BaseDirs::new().context("could not determine the user home directory")?;
     Ok(base_dirs.home_dir().join(".ssh").join("config"))
-}
-
-fn parse_ssh_host_aliases(contents: &str) -> Vec<String> {
-    let aliases: BTreeSet<String> = contents
-        .lines()
-        .flat_map(|line| {
-            let declaration = line.split_once('#').map_or(line, |(before, _)| before);
-            let mut fields = declaration.split_whitespace();
-            matches!(fields.next(), Some(keyword) if keyword.eq_ignore_ascii_case("host"))
-                .then(|| {
-                    fields
-                        .filter(|candidate| !candidate.contains(['*', '?', '!']))
-                        .map(str::to_owned)
-                })
-                .into_iter()
-                .flatten()
-        })
-        .collect();
-    aliases.into_iter().collect()
 }
 
 fn remote_updates(scope: ConfigScope, ssh_host: Option<&str>) -> Result<Vec<RemoteUpdate>> {
@@ -444,16 +439,6 @@ mod tests {
         assert_eq!(
             rewrite_ssh_url("https://github.com/owner/repo.git", "github-work"),
             None
-        );
-    }
-
-    #[test]
-    fn parses_only_literal_ssh_host_aliases() {
-        assert_eq!(
-            parse_ssh_host_aliases(
-                "Host github-work github-personal\nHost work-*\nInclude extra\n"
-            ),
-            vec!["github-personal", "github-work"]
         );
     }
 }
