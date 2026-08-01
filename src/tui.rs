@@ -14,10 +14,13 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
+    },
 };
 
 use crate::{
@@ -929,7 +932,7 @@ fn render_form(frame: &mut Frame, form: &Form, status: Option<&StatusMessage>) {
 
 fn render_ssh_host_picker(frame: &mut Frame, aliases: &[String], selected: usize) {
     let visible = aliases.len().min(8);
-    let height = (visible as u16 + 6).min(frame.area().height);
+    let height = ssh_host_picker_height(aliases.len(), frame.area().height);
     let area = centered_rect(58, height, frame.area());
     render_modal_backdrop(frame);
     frame.render_widget(Clear, area);
@@ -952,6 +955,28 @@ fn render_ssh_host_picker(frame: &mut Frame, aliases: &[String], selected: usize
     let mut state = ListState::default();
     state.select(Some(selected - start));
     frame.render_stateful_widget(list, area, &mut state);
+
+    if aliases.len() > visible {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .thumb_style(Theme::focused_border())
+            .track_style(Theme::muted());
+        let scroll_positions = aliases.len() - visible + 1;
+        let mut scrollbar_state = ScrollbarState::new(scroll_positions)
+            .position(start)
+            .viewport_content_length(visible);
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn ssh_host_picker_height(alias_count: usize, available_height: u16) -> u16 {
+    (alias_count.min(8) as u16 + 2).min(available_height)
 }
 
 fn render_input(
@@ -1229,6 +1254,47 @@ mod tests {
                 ..
             })) if ssh_host == "github-work"
         ));
+    }
+
+    #[test]
+    fn ssh_host_picker_height_fits_visible_aliases() {
+        assert_eq!(ssh_host_picker_height(3, 30), 5);
+        assert_eq!(ssh_host_picker_height(12, 30), 10);
+        assert_eq!(ssh_host_picker_height(12, 7), 7);
+    }
+
+    #[test]
+    fn ssh_host_picker_shows_scrollbar_for_overflow() {
+        let aliases = (1..=10)
+            .map(|index| format!("github-{index}"))
+            .collect::<Vec<_>>();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_ssh_host_picker(frame, &aliases, 0))
+            .unwrap();
+        let screen = terminal.backend().to_string();
+        assert!(screen.contains('▲'));
+        assert!(screen.contains('▼'));
+
+        terminal
+            .draw(|frame| render_ssh_host_picker(frame, &aliases, aliases.len() - 1))
+            .unwrap();
+        let area = centered_rect(
+            58,
+            ssh_host_picker_height(aliases.len(), 30),
+            Rect::new(0, 0, 100, 30),
+        );
+        let bottom_of_track = (area.right() - 1, area.bottom() - 3);
+        assert_eq!(
+            terminal
+                .backend()
+                .buffer()
+                .cell(bottom_of_track)
+                .unwrap()
+                .symbol(),
+            "█"
+        );
     }
 
     #[test]
