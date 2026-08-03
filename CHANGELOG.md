@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Profile updates now preserve a symlinked `config.toml` and atomically update its target file.
+
 ## [0.4.2] - 2026-08-01
 
 ### Fixed

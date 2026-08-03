@@ -115,8 +115,19 @@ impl ProfileStore {
     }
 
     fn save(&self, profiles: &Profiles) -> Result<()> {
-        let parent = self
-            .path
+        let path = if fs::symlink_metadata(&self.path)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            fs::canonicalize(&self.path).with_context(|| {
+                format!(
+                    "could not resolve profile file symlink {}",
+                    self.path.display()
+                )
+            })?
+        } else {
+            self.path.clone()
+        };
+        let parent = path
             .parent()
             .context("profile path has no parent directory")?;
         fs::create_dir_all(parent)
@@ -132,10 +143,10 @@ impl ProfileStore {
             .as_file()
             .sync_all()
             .context("could not sync temporary profile file")?;
-        temporary.persist(&self.path).map_err(|error| {
+        temporary.persist(&path).map_err(|error| {
             anyhow::anyhow!(
                 "could not replace profile file {}: {}",
-                self.path.display(),
+                path.display(),
                 error.error
             )
         })?;
@@ -294,5 +305,35 @@ mod tests {
         fs::write(&path, "not valid = [").unwrap();
         let store = ProfileStore::new(path);
         assert!(store.load().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_updates_symlink_target_without_replacing_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let target_directory = tempdir().unwrap();
+        let target = target_directory.path().join("profiles.toml");
+        fs::write(&target, "[profiles]\n").unwrap();
+
+        let path = directory.path().join("config.toml");
+        symlink(&target, &path).unwrap();
+        let store = ProfileStore::new(path.clone());
+        store
+            .add("work".into(), profile("Work User", "work@example.com"))
+            .unwrap();
+
+        assert!(
+            fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            fs::read_to_string(target)
+                .unwrap()
+                .contains("work@example.com")
+        );
     }
 }
